@@ -14,8 +14,16 @@ class Auth0_Auth:
         self.audience = audience or os.getenv("AUTH0_AUDIENCE")
         self.client_id = client_id or os.getenv("AUTH0_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("AUTH0_CLIENT_SECRET")
-        self.token = self.get_token()
+        # self.token = self.get_token()
+        self.bearer_scheme = self.create_bearer_scheme()
 
+    def create_bearer_scheme(self):
+        return HTTPBearer()
+
+    def set_token(self):
+        self.token = self.get_token()
+        return self.token
+    
     def get_token(self):
         url = f"https://{self.domain}/oauth/token"
         payload = {
