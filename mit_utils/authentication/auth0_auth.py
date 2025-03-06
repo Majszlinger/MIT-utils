@@ -1,9 +1,11 @@
 import requests
 import os
 import jwt
+import json
 from functools import wraps
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jwt.algorithms import RSAAlgorithm
 
 
 
@@ -46,19 +48,24 @@ class Auth0_Auth:
         jwks = self.get_public_key()
         unverified_header = jwt.get_unverified_header(token)
 
-        rsa_key = next(
-            key for key in jwks["keys"] if key["kid"] == unverified_header["kid"]
-        )
+        # Find the matching key
+        rsa_key = None
+        for key in jwks["keys"]:
+            if key["kid"] == unverified_header["kid"]:
+                rsa_key = key
+                break
         if not rsa_key:
             raise HTTPException(status_code=401, detail="Invalid token")
+
+        # Convert the JWKS to a proper public key
+        try:
+            public_key = RSAAlgorithm.from_jwk(json.dumps(rsa_key))
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid key format")
+
         payload = jwt.decode(
             token,
-            key={
-                "kty": rsa_key["kty"],
-                "kid": rsa_key["kid"],
-                "use": rsa_key["use"],
-                "n": rsa_key["n"],
-                "e": rsa_key["e"]},
+            public_key,
             algorithms=["RS256"],
             audience=self.audience,
             issuer=f"https://{self.domain}/"
@@ -66,6 +73,8 @@ class Auth0_Auth:
 
         return payload
     
-    def get_payload(self, credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())):
-        token = credentials.credentials
-        return self.verify_token(token)
+    def get_payload(self):
+        async def _get_payload(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> dict:
+            token = credentials.credentials
+            return self.verify_token(token)
+        return _get_payload
