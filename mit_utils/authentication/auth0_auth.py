@@ -4,7 +4,7 @@ import jwt
 import json
 from functools import wraps
 from fastapi import Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2AuthorizationCodeBearer
 from jwt.algorithms import RSAAlgorithm
 
 
@@ -17,26 +17,30 @@ class Auth0_Auth:
         self.client_id = client_id or os.getenv("AUTH0_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("AUTH0_CLIENT_SECRET")
         # self.token = self.get_token()
-        self.bearer_scheme = self.create_bearer_scheme()
+        # self.bearer_scheme = self.create_bearer_scheme()
+        self.bearer_scheme = self.create_oauth2_scheme()
 
     def create_bearer_scheme(self):
         return HTTPBearer()
+    
+    def create_oauth2_scheme(self):
+        oauth2_scheme = OAuth2AuthorizationCodeBearer(
+            authorizationUrl=f"https://{self.domain}/authorize?organization=org_bU1vjBdt8MH76fBo&audience={self.audience}",
+            tokenUrl=f"https://{self.domain}/oauth/token",
+            scopes={
+            "openid": "Basic user identity",
+            "profile": "Access profile info",
+            "email": "Access email address",
+            "https://data-collector.hellenergy.hu/api": "Access the data collector API"
+        },
+            
+        )
+        return oauth2_scheme
 
     def set_token(self):
         self.token = self.get_token()
         return self.token
     
-    def get_token(self):
-        url = f"https://{self.domain}/oauth/token"
-        payload = {
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-            "audience": self.audience,
-            "grant_type": "client_credentials"
-        }
-        response = requests.post(url, data=payload)
-        response.raise_for_status()
-        return response.json()["access_token"]
     
     def get_public_key(self):
         url = f"https://{self.domain}/.well-known/jwks.json"
