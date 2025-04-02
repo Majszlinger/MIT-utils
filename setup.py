@@ -9,6 +9,6 @@ setup(
     python_requires=">=3.7",
     install_requires=[],
     extras_require={
-        "auth": ["pyjwt"],
+        "auth": ["pyjwt","fastapi","cryptography"],
     }
 )
