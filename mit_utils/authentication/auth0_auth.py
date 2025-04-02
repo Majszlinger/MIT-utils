@@ -2,7 +2,6 @@ import requests
 import os
 import jwt
 import json
-from functools import wraps
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2AuthorizationCodeBearer
 from jwt.algorithms import RSAAlgorithm
@@ -23,15 +22,29 @@ class Auth0_Auth:
     def create_bearer_scheme(self):
         return HTTPBearer()
     
+
+    # def create_oauth2_scheme_with_org(self):
+    #     oauth2_scheme = OAuth2AuthorizationCodeBearer(
+    #         authorizationUrl=f"https://{self.domain}/authorize?organization={self.org_id}&audience={self.audience}",
+    #         tokenUrl=f"https://{self.domain}/oauth/token",
+    #         scopes={
+    #         "openid": "Basic user identity",
+    #         "profile": "Access profile info",
+    #         "email": "Access email address",
+    #     },
+    #     )
+    #     return oauth2_scheme
+
+
+
     def create_oauth2_scheme(self):
         oauth2_scheme = OAuth2AuthorizationCodeBearer(
-            authorizationUrl=f"https://{self.domain}/authorize?organization=org_bU1vjBdt8MH76fBo&audience={self.audience}",
+            authorizationUrl=f"https://{self.domain}/authorize?audience={self.audience}",
             tokenUrl=f"https://{self.domain}/oauth/token",
             scopes={
             "openid": "Basic user identity",
             "profile": "Access profile info",
             "email": "Access email address",
-            "https://data-collector.hellenergy.hu/api": "Access the data collector API"
         },
             
         )
@@ -78,7 +91,19 @@ class Auth0_Auth:
         return payload
     
     def get_payload(self):
-        async def _get_payload(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> dict:
-            token = credentials.credentials
+        async def _get_payload(credentials: HTTPAuthorizationCredentials = Depends(self.bearer_scheme),
+                               bearer_credentials:HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> dict:
+            """
+            Extracts the payload from the provided bearer token.
+            Args:
+                credentials (HTTPAuthorizationCredentials): The bearer token credentials 
+                extracted from the request using the default bearer scheme.
+                bearer_credentials (HTTPAuthorizationCredentials): An additional bearer 
+                token dependency added for Swagger authentication purposes. Note that 
+                `credentials` are populated regardless of whether this parameter is used.
+            Returns:
+                dict: The decoded payload of the bearer token.
+            """
+            token = credentials
             return self.verify_token(token)
         return _get_payload
