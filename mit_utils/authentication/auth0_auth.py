@@ -5,7 +5,7 @@ import json
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2AuthorizationCodeBearer
 from jwt.algorithms import RSAAlgorithm
-
+from typing import List
 
 
 
@@ -107,3 +107,28 @@ class Auth0_Auth:
             token = credentials
             return self.verify_token(token)
         return _get_payload
+    
+    def has_permission(self, permissions: List[str]):
+        """
+        Checks if the user has at least one of the specified permissions in the token payload.
+        Args:
+            permissions (List[str]): A list of permissions to check for in the token payload.
+        Returns:
+            bool: True if at least one of the permissions exists in the token payload, False otherwise.
+        """
+        def _has_permission(payload: dict = Depends(self.get_payload())) -> bool:
+            return any(permission in payload.get("permissions", []) for permission in permissions)
+        return _has_permission
+    
+    def has_group_permission(self, permissions: List[str]):
+        """
+        Checks if the user has all of the specified permissions in the token payload.
+        Args:
+            permissions (List[str]): A list of permissions to check for in the token payload.
+        Returns:
+            bool: True if all of the permissions exist in the token payload, False otherwise.
+        """
+        def _has_group_permission(payload: dict = Depends(self.get_payload())) -> bool:
+            return all(permission in payload.get("permissions", []) for permission in permissions)
+        return _has_group_permission
+    
