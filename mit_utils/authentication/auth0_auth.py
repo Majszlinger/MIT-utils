@@ -110,25 +110,34 @@ class Auth0_Auth:
     
     def has_permission(self, permissions: List[str]):
         """
-        Checks if the user has at least one of the specified permissions in the token payload.
+        Validates if the user has at least one of the specified permissions in the token payload.
         Args:
-            permissions (List[str]): A list of permissions to check for in the token payload.
+            permissions (List[str]): A list of permissions to validate against the token payload.
         Returns:
-            bool: True if at least one of the permissions exists in the token payload, False otherwise.
+            dict: The decoded payload of the token if at least one of the specified permissions is found.
+        Raises:
+            HTTPException: If none of the specified permissions are found in the token payload.
         """
         def _has_permission(payload: dict = Depends(self.get_payload())) -> bool:
-            return any(permission in payload.get("permissions", []) for permission in permissions)
+            if any(permission in payload.get("permissions", []) for permission in permissions):
+                return payload
+            else:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
         return _has_permission
     
     def has_group_permission(self, permissions: List[str]):
         """
-        Checks if the user has all of the specified permissions in the token payload.
+        Validates if the user has all of the specified permissions in the token payload.
         Args:
-            permissions (List[str]): A list of permissions to check for in the token payload.
+            permissions (List[str]): A list of permissions to validate against the token payload.
         Returns:
-            bool: True if all of the permissions exist in the token payload, False otherwise.
+            dict: The decoded payload of the token if all of the specified permissions are found.
+        Raises:
+            HTTPException: If not all of the specified permissions are found in the token payload.
         """
         def _has_group_permission(payload: dict = Depends(self.get_payload())) -> bool:
-            return all(permission in payload.get("permissions", []) for permission in permissions)
+            if all(permission in payload.get("permissions", []) for permission in permissions):
+                return payload
+            else:
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
         return _has_group_permission
-    
