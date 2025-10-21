@@ -141,3 +141,20 @@ class Auth0_Auth:
             else:
                 raise HTTPException(status_code=403, detail="Insufficient permissions")
         return _has_group_permission
+    
+    def get_userinfo(self, token: str):
+        """
+        Fetches user info from Auth0 using the access token.
+        Args:
+            token (str): The access token.
+        Returns:
+            dict: The user info from Auth0.
+        Raises:
+            HTTPException: If the request fails.
+        """
+        url = f"https://{self.domain}/userinfo"
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch user info")
+        return response.json()
