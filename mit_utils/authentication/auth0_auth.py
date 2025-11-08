@@ -6,16 +6,15 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2AuthorizationCodeBearer
 from jwt.algorithms import RSAAlgorithm
 from typing import List
+import time
 import logging
 
 
 
 class Auth0_Auth:
     def __init__(self, domain: str = None, audience: str = None, client_id: str = None, client_secret: str = None):
-
         self.domain = domain or os.getenv("AUTH0_DOMAIN")
         self.audience = audience or os.getenv("AUTH0_AUDIENCE")
-        
         if not self.domain or not self.audience:
             logging.error("Auth0 Auth is not ready: domain or audience is missing.")
             raise ValueError("Auth0 Auth is not ready: domain or audience is missing.")
@@ -23,12 +22,11 @@ class Auth0_Auth:
         # m2m variables
         self.client_id = client_id or os.getenv("AUTH0_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("AUTH0_CLIENT_SECRET")
-
         if not self.client_id or not self.client_secret:
             logging.warning("Auth0 M2M token is not ready: client_id or client_secret is missing.")
 
-        # self.token = self.get_token()
-        # self.bearer_scheme = self.create_bearer_scheme()
+        self._m2m_token = None
+
         self.bearer_scheme = self.create_oauth2_scheme()
 
     def create_bearer_scheme(self):
@@ -170,3 +168,40 @@ class Auth0_Auth:
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail="Failed to fetch user info")
         return response.json()
+    
+
+    def get_m2m_token(self):
+        """
+        Returns a cached M2M token if valid, otherwise fetches a new one and caches it.
+        The expiry is always checked by decoding the token's 'exp' claim.
+        """
+        if self._m2m_token:
+            try:
+                unverified_payload = jwt.decode(self._m2m_token, options={"verify_signature": False, "verify_aud": False})
+                exp = int(unverified_payload["exp"])
+                now = int(time.time())
+                # Add a small buffer (e.g., 30 seconds) to avoid using a token that's about to expire
+                if now < exp - 30:
+                    return self._m2m_token
+            except Exception as e:
+                logging.warning(f"Could not parse exp from m2m token: {e}")
+                # If parsing fails, treat as expired and fetch new
+                pass
+        # Need to fetch a new token
+        token_res = requests.post(
+            f"https://{self.domain}/oauth/token",
+            json={
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "audience": f"https://{self.domain}/api/v2/",
+                "grant_type": "client_credentials",
+            },
+        )
+        if token_res.status_code != 200:
+            logging.error(f"Failed to get Auth0 M2M token: {token_res.text}")
+            raise HTTPException(status_code=500, detail="Failed to get Auth0 M2M token")
+        token_data = token_res.json()
+        self._m2m_token = token_data["access_token"]
+        return self._m2m_token
+    
+    
