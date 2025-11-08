@@ -6,15 +6,27 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2AuthorizationCodeBearer
 from jwt.algorithms import RSAAlgorithm
 from typing import List
+import logging
 
 
 
 class Auth0_Auth:
     def __init__(self, domain: str = None, audience: str = None, client_id: str = None, client_secret: str = None):
+
         self.domain = domain or os.getenv("AUTH0_DOMAIN")
         self.audience = audience or os.getenv("AUTH0_AUDIENCE")
+        
+        if not self.domain or not self.audience:
+            logging.error("Auth0 Auth is not ready: domain or audience is missing.")
+            raise ValueError("Auth0 Auth is not ready: domain or audience is missing.")
+
+        # m2m variables
         self.client_id = client_id or os.getenv("AUTH0_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("AUTH0_CLIENT_SECRET")
+
+        if not self.client_id or not self.client_secret:
+            logging.warning("Auth0 M2M token is not ready: client_id or client_secret is missing.")
+
         # self.token = self.get_token()
         # self.bearer_scheme = self.create_bearer_scheme()
         self.bearer_scheme = self.create_oauth2_scheme()
