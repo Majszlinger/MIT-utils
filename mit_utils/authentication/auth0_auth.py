@@ -204,4 +204,16 @@ class Auth0_Auth:
         self._m2m_token = token_data["access_token"]
         return self._m2m_token
     
-    
+
+    def post_to_mgmt_api(self, endpoint: str, json_data: dict):
+        mgmt_token = self.get_m2m_token()
+        response = requests.post(
+            f"https://{self.domain}/api/v2/{endpoint}",
+            headers={
+                "Authorization": f"Bearer {mgmt_token}",
+                "Content-Type": "application/json",
+            },
+            json=json_data,
+        )
+
+        return response
