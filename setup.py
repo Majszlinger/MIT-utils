@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="mit_utils",
-    version="0.0.1",
+    version="0.0.2",
     packages=find_packages(),
     author="MIT Solutions",
     description="Utility Bundle for development",
