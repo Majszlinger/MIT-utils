@@ -217,3 +217,37 @@ class Auth0_Auth:
         )
 
         return response
+
+    def delete_from_mgmt_api(self, endpoint: str):
+        mgmt_token = self.get_m2m_token()
+        response = requests.delete(
+            f"https://{self.domain}/api/v2/{endpoint}",
+            headers={
+                "Authorization": f"Bearer {mgmt_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        return response
+    
+    def get_from_mgmt_api(self, endpoint: str):
+        mgmt_token = self.get_m2m_token()
+        response = requests.get(
+            f"https://{self.domain}/api/v2/{endpoint}",
+            headers={
+                "Authorization": f"Bearer {mgmt_token}",
+                "Content-Type": "application/json",
+            },
+        )
+        return response
+    
+    def patch_to_mgmt_api(self, endpoint: str, json_data: dict):
+        mgmt_token = self.get_m2m_token()
+        response = requests.patch(
+            f"https://{self.domain}/api/v2/{endpoint}",
+            headers={
+                "Authorization": f"Bearer {mgmt_token}",
+                "Content-Type": "application/json",
+            },
+            json=json_data,
+        )
+        return response
