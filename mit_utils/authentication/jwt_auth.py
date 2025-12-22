@@ -5,6 +5,7 @@ import datetime
 from typing import Any, Dict
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import UnsupportedAlgorithm
+from fastapi import HTTPException, status
 
 
 JWT_SIGN_ALGORITHM = os.getenv("JWT_SIGN_ALGORITHM", "HS256")
@@ -103,8 +104,24 @@ class JWT_Auth:
     def validate_jwt_token(self, token: str) -> Dict[str, Any]:
         """
         Validates the given JWT token and returns its payload if valid.
-        Raises jwt.exceptions.InvalidTokenError if token is invalid or expired.
+        Raises HTTPException with status code 401 for invalid/expired tokens.
         """
-        header_data = jwt.get_unverified_header(token)
-        decoded = jwt.decode(token, self.secret_key, algorithms=[header_data["alg"]])
-        return decoded
+        
+        try:
+            header_data = jwt.get_unverified_header(token)
+            decoded = jwt.decode(token, self.secret_key, algorithms=[header_data["alg"]])
+            return decoded
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired"
+            )
+        except jwt.InvalidTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        except Exception as e:
+            logging.error(f"Unexpected error validating JWT token: {e}")
+            raise
+        
