@@ -8,6 +8,7 @@ from .dimail import (
     DimailAPIError,
     DimailClient,
     DimailConfigError,
+    list_dimail_subscribers_csv,
     request_dimail,
 )
 
@@ -40,6 +41,7 @@ __all__ = [
     "DimailAPIError",
     "DimailClient",
     "DimailConfigError",
+    "list_dimail_subscribers_csv",
     "request_dimail",
     *_GRAPH_EXPORTS,
 ]

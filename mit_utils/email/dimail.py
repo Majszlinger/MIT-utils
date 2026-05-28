@@ -7,11 +7,12 @@ error with a compact raw body when the API returns malformed/non-JSON output.
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
@@ -30,6 +31,7 @@ __all__ = [
     "DimailClient",
     "DimailAPIError",
     "DimailConfigError",
+    "list_dimail_subscribers_csv",
     "request_dimail",
 ]
 
@@ -74,12 +76,31 @@ def _resolve_host(host: Optional[str]) -> str:
     return host or os.getenv(ENV_HOST) or DEFAULT_HOST
 
 
-def _api_url(host: str, endpoint: str, query: Mapping[str, Any]) -> str:
+def _api_url(
+    host: str,
+    endpoint: str,
+    query: Mapping[str, Any],
+    *,
+    bare_query_flags: Optional[Iterable[str]] = None,
+    trailing_slash: bool = True,
+) -> str:
     """Build a Dimail endpoint URL with the supplied query parameters."""
 
     clean_host = host.rstrip("/")
     clean_endpoint = endpoint.strip("/")
-    return "%s/a/%s/?%s" % (clean_host, clean_endpoint, urlencode(query, doseq=True))
+    path_suffix = "/" if trailing_slash else ""
+    encoded_parts = []
+    encoded_query = urlencode(query, doseq=True)
+    if encoded_query:
+        encoded_parts.append(encoded_query)
+    for flag in bare_query_flags or ():
+        if flag:
+            encoded_parts.append(quote(str(flag), safe=""))
+
+    query_string = "&".join(encoded_parts)
+    if query_string:
+        return "%s/a/%s%s?%s" % (clean_host, clean_endpoint, path_suffix, query_string)
+    return "%s/a/%s%s" % (clean_host, clean_endpoint, path_suffix)
 
 
 def _decode_response_body(raw_body: bytes) -> str:
@@ -102,6 +123,58 @@ def _parse_json(text: str) -> Any:
         return _NON_JSON
 
 
+def _decode_csv_bytes(raw_body: bytes) -> str:
+    """Decode Dimail's CSV export using likely Central European encodings."""
+
+    for encoding in ("utf-8-sig", "utf-8", "cp1250", "latin-1"):
+        try:
+            return raw_body.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw_body.decode("utf-8", errors="replace")
+
+
+def _csv_dialect(text: str) -> csv.Dialect:
+    """Detect the delimiter used by Dimail's subscriber CSV export."""
+
+    try:
+        return csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+    except csv.Error:
+        return csv.excel
+
+
+def _parse_subscribers_csv(raw_body: bytes) -> List[Dict[str, str]]:
+    """Parse Dimail's headerless subscriber CSV into email/name dictionaries."""
+
+    text = _decode_csv_bytes(raw_body)
+    dialect = _csv_dialect(text)
+    subscribers: List[Dict[str, str]] = []
+
+    for values in csv.reader(text.splitlines(), dialect=dialect):
+        if not values or all(not str(value).strip() for value in values):
+            continue
+
+        email = str(values[0]).strip() if len(values) >= 1 else ""
+        name = str(values[1]).strip() if len(values) >= 2 else ""
+
+        if email:
+            subscribers.append({"email": email, "name": name})
+
+    return subscribers
+
+
+def _subscriber_export_url(host: str, list_id: Id, api_key: str) -> str:
+    """Build the support-provided subscriber CSV export URL."""
+
+    clean_host = host.rstrip("/")
+    clean_list_id = quote(str(list_id), safe="")
+    return "%s/a/clients/%s?%s&download" % (
+        clean_host,
+        clean_list_id,
+        urlencode({"key": api_key}),
+    )
+
+
 def request_dimail(
     endpoint: str,
     data: Optional[Mapping[str, Any]] = None,
@@ -110,6 +183,8 @@ def request_dimail(
     host: Optional[str] = None,
     method: str = "POST",
     timeout: int = DEFAULT_TIMEOUT,
+    bare_query_flags: Optional[Iterable[str]] = None,
+    trailing_slash: bool = True,
 ) -> Any:
     """Send a raw Dimail API request and return the parsed payload.
 
@@ -117,7 +192,8 @@ def request_dimail(
     yet. Feature helpers below are preferred for normal app code. Empty,
     ``null``, ``false``, and Dimail's non-JSON ``False``/``None`` variants are
     treated as empty API responses and raise ``DimailAPIError`` with the raw
-    body attached.
+    body attached. ``bare_query_flags`` supports Dimail endpoints that expect a
+    query flag without ``=value``, such as newsletter listing's ``&get``.
     """
 
     if not endpoint or not endpoint.strip("/"):
@@ -135,10 +211,22 @@ def request_dimail(
     resolved_host = _resolve_host(host)
 
     if method == "GET":
-        url = _api_url(resolved_host, endpoint, {"key": resolved_api_key, **data})
+        url = _api_url(
+            resolved_host,
+            endpoint,
+            {"key": resolved_api_key, **data},
+            bare_query_flags=bare_query_flags,
+            trailing_slash=trailing_slash,
+        )
         body = None
     else:
-        url = _api_url(resolved_host, endpoint, {"key": resolved_api_key})
+        url = _api_url(
+            resolved_host,
+            endpoint,
+            {"key": resolved_api_key},
+            bare_query_flags=bare_query_flags,
+            trailing_slash=trailing_slash,
+        )
         body = urlencode(data, doseq=True).encode("utf-8")
 
     request = Request(
@@ -169,6 +257,49 @@ def request_dimail(
                     payload=payload,
                 )
             return payload
+    except HTTPError as error:
+        text = _decode_response_body(error.read())
+        payload = _parse_json(text)
+        if payload is _NON_JSON:
+            payload = None
+        raise DimailAPIError(
+            "Dimail returned HTTP %s." % error.code,
+            status_code=error.code,
+            raw_body=text,
+            payload=payload,
+        ) from error
+    except URLError as error:
+        raise DimailAPIError("Dimail request failed: %s" % error.reason) from error
+
+
+def list_dimail_subscribers_csv(
+    list_id: Id,
+    *,
+    api_key: Optional[str] = None,
+    host: Optional[str] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> List[Dict[str, str]]:
+    """Return subscribers for a Dimail list via the CSV export workaround.
+
+    Dimail does not currently expose a JSON subscriber-listing endpoint. Their
+    supported workaround is a CSV download at ``/a/clients/<list_id>?key=...&download``.
+    This helper keeps the CSV fully in memory and returns dictionaries with
+    stable ``email`` and ``name`` keys.
+    """
+
+    if not list_id:
+        raise ValueError("list_id is required.")
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero.")
+
+    resolved_api_key = _resolve_api_key(api_key)
+    resolved_host = _resolve_host(host)
+    url = _subscriber_export_url(resolved_host, list_id, resolved_api_key)
+    request = Request(url, method="GET", headers={"Accept": "text/csv,*/*"})
+
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return _parse_subscribers_csv(response.read())
     except HTTPError as error:
         text = _decode_response_body(error.read())
         payload = _parse_json(text)
@@ -250,6 +381,8 @@ class DimailClient:
         data: Optional[Mapping[str, Any]] = None,
         *,
         method: str = "POST",
+        bare_query_flags: Optional[Iterable[str]] = None,
+        trailing_slash: bool = True,
     ) -> Any:
         """Send a raw request using this client's configuration."""
 
@@ -260,6 +393,8 @@ class DimailClient:
             host=self.host,
             method=method,
             timeout=self.timeout,
+            bare_query_flags=bare_query_flags,
+            trailing_slash=trailing_slash,
         )
 
     def list_lists(self) -> List[Dict[str, Any]]:
@@ -309,10 +444,25 @@ class DimailClient:
         payload = self.request("unsubscribe", {"list": list_id, "email": email})
         return _expect_status(payload, {"success"})
 
+    def list_subscribers(self, list_id: Id) -> List[Dict[str, str]]:
+        """Return subscribers from a mailing list as ``email``/``name`` dictionaries."""
+
+        return list_dimail_subscribers_csv(
+            list_id,
+            api_key=self.api_key,
+            host=self.host,
+            timeout=self.timeout,
+        )
+
     def list_newsletters(self) -> List[Dict[str, Any]]:
         """Return newsletters visible to the configured API key."""
 
-        payload = self.request("newsletter", {"get": "1"})
+        payload = self.request(
+            "newsletter",
+            method="GET",
+            bare_query_flags=["get"],
+            trailing_slash=False,
+        )
         return _collection(payload, "newsletter")
 
     def create_newsletter(
