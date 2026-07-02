@@ -10,6 +10,12 @@ setup(
     install_requires=[],
     extras_require={
         "auth": ["pyjwt", "fastapi", "cryptography"],
-        "email": ["httpx", "msal"],
+        "email": [
+            "httpx",
+            "msal",
+            "google-api-python-client",
+            "google-auth",
+            "google-auth-httplib2",
+        ],
     }
 )

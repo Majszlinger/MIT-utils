@@ -1,6 +1,6 @@
 # Email Module
 
-Email utilities supporting **Dimail/ninjaMail** and **Microsoft Graph** providers.
+Email utilities supporting **Dimail/ninjaMail**, **Microsoft Graph**, and **Gmail API** providers.
 
 ## Installation
 
@@ -8,7 +8,7 @@ Email utilities supporting **Dimail/ninjaMail** and **Microsoft Graph** provider
 pip install "mit_utils[email] @ git+https://github.com/Majszlinger/MIT-utils.git"
 ```
 
-This installs `httpx` and `msal` as dependencies.
+This installs `httpx`, `msal`, and the Google API client libraries as dependencies.
 
 ---
 
@@ -47,15 +47,8 @@ client.subscribe(
 # Unsubscribe
 client.unsubscribe(list_id="newsletter-123", email="user@example.com")
 
-# Update subscriber
-client.update_subscriber(
-    list_id="newsletter-123",
-    email="user@example.com",
-    name="Jane Doe",
-)
-
 # List subscribers (CSV export)
-subscribers = client.list_subscribers_csv("newsletter-123")
+subscribers = client.list_subscribers("newsletter-123")
 # Returns: [{"email": "user@example.com", "name": "John Doe"}, ...]
 ```
 
@@ -63,18 +56,25 @@ subscribers = client.list_subscribers_csv("newsletter-123")
 
 ```python
 # Create a newsletter
-client.create_newsletter(
-    list_id="newsletter-123",
+newsletter = client.create_newsletter(
     subject="Monthly Update",
     html_message="<h1>Hello!</h1>",
     text_message="Hello!",
 )
 
+# Update a newsletter
+client.update_newsletter(
+    newsletter_id="newsletter-456",
+    subject="Monthly Update",
+    html_message="<h1>Updated!</h1>",
+    text_message="Updated!",
+)
+
 # Send a newsletter
-client.send_newsletter(list_id="newsletter-123", start=0)
+client.send_newsletter(newsletter_id="newsletter-456", start=0)
 
 # List newsletters
-newsletters = client.list_newsletters(list_id="newsletter-123")
+newsletters = client.list_newsletters()
 ```
 
 #### List Management
@@ -85,6 +85,9 @@ client.create_list(name="New Newsletter")
 
 # List all lists
 lists = client.list_lists()
+
+# Remove a list
+client.remove_list(list_id="newsletter-123")
 ```
 
 #### Campaign Management
@@ -93,14 +96,35 @@ lists = client.list_lists()
 # Create a campaign
 client.create_campaign(name="Summer Campaign")
 
-# Link lists to a campaign
-client.add_lists_to_campaign(
+# Replace lists attached to a campaign
+client.update_campaign_lists(
     campaign_id="campaign-456",
     list_ids=["newsletter-123", "newsletter-789"],
 )
 
-# Send a campaign
-client.send_campaign(campaign_id="campaign-456")
+# Attach a campaign to a newsletter
+client.attach_campaign_to_newsletter(
+    campaign_id="campaign-456",
+    newsletter_id="newsletter-456",
+)
+
+# Remove a campaign
+client.remove_campaign(campaign_id="campaign-456")
+```
+
+#### One-Off Email
+
+```python
+# Queue a transactional email
+send_payload = client.send_email(
+    to="user@example.com",
+    subject="Welcome",
+    html_message="<p>Hello!</p>",
+    text_message="Hello!",
+)
+
+# Check queued email status
+client.check_email_status(send_payload.get("id"))
 ```
 
 #### Login Token
@@ -118,10 +142,18 @@ For endpoints not yet wrapped:
 from mit_utils.email import request_dimail
 
 # GET request
-data = request_dimail("newsletters", method="GET")
+data = request_dimail(
+    "newsletter",
+    method="GET",
+    bare_query_flags=["get"],
+    trailing_slash=False,
+)
 
 # POST request
-data = request_dimail("subscribers", data={"email": "user@example.com"})
+data = request_dimail(
+    "subscribe",
+    data={"list": "newsletter-123", "email": "user@example.com"},
+)
 ```
 
 ### Error Handling
@@ -252,49 +284,173 @@ except GraphAPIError as e:
 
 ---
 
-## FastAPI Integration Example
+## Gmail API Integration (`gmail.py`)
 
-See the [examples/fastapi_email](../../examples/fastapi_email/) directory for a complete FastAPI reference app with:
+Send emails through Gmail API with a Google service account and Workspace
+domain-wide delegation. Gmail sending is intentionally simple: one recipient,
+a string subject, and a string plain-text body.
 
-- Dimail subscriber management endpoints
-- Dimail newsletter and campaign endpoints
-- Microsoft Graph email sending endpoint
-- Health check endpoint
-- Pydantic settings with environment variable support
+### Configuration
 
-### Quick Example
+```bash
+GMAIL_SENDER_EMAIL=info@example.com
+GMAIL_DELEGATED_SUBJECT=info@example.com
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+# or, instead of GOOGLE_APPLICATION_CREDENTIALS:
+# GOOGLE_SERVICE_ACCOUNT_INFO={"type":"service_account",...}
+# GMAIL_TIMEOUT=10
+```
+
+The service account must have domain-wide delegation enabled, and Google
+Workspace Admin Console must authorize the service account client ID for:
+
+```text
+https://www.googleapis.com/auth/gmail.send
+```
+
+### Quick Send
 
 ```python
-from fastapi import FastAPI, HTTPException
-from mit_utils.email import DimailClient, GraphEmailClient
+from mit_utils.email.gmail import send_gmail_email
 
-app = FastAPI()
-dimail = DimailClient()
-graph = GraphEmailClient()
+send_gmail_email(
+    to_email="user@example.com",
+    subject="Welcome!",
+    body="Welcome aboard!",
+)
+```
+
+### GmailEmailClient
+
+For apps that send multiple emails, use the reusable client:
+
+```python
+from mit_utils.email import GmailEmailClient
+
+client = GmailEmailClient()
+client.send_email(
+    to_email="user@example.com",
+    subject="Update",
+    body="Please see the attached report.",
+)
+```
+
+You can pass `sender_email`, `service_account_file`,
+`service_account_info`, `delegated_subject`, or `timeout` directly when a test
+or integration should not read from environment variables.
+
+### Error Handling
+
+```python
+from mit_utils.email import GmailAPIError, GmailConfigError, GmailEmailClient
+
+client = GmailEmailClient()
+
+try:
+    client.send_email(
+        to_email="user@example.com",
+        subject="Test",
+        body="Hello!",
+    )
+except GmailConfigError as e:
+    print(f"Configuration error: {e}")
+except GmailAPIError as e:
+    print(f"API error: {e}")
+    print(f"Status code: {e.status_code}")
+    print(f"Response: {e.response_text}")
+    print(f"Payload: {e.payload}")
+```
+
+---
+
+## Bulk Email Generator (`bulk.py`)
+
+Use `send_emails_generator` when an app needs to send the same simple email to
+many recipients and record progress as each attempt finishes. The utility
+library does not write to a database; it yields a uniform result object so your
+app can store success, failure, and completion state wherever it belongs.
+
+The Graph and Gmail clients are synchronous for direct use, but the bulk
+generator offloads each provider send to the event loop's executor. Sends remain
+sequential for predictable ordering, and callers can pace requests with either
+the `delay_seconds` argument or the `BULK_EMAIL_DELAY_SECONDS` environment
+variable. In an async web backend, still run bulk sends outside the request
+path, in a worker, or behind your own background job wrapper.
+
+```bash
+BULK_EMAIL_DELAY_SECONDS=0.2
+```
+
+### Send One Message To Many Recipients
+
+```python
+from mit_utils.email import send_emails_generator
+
+async for result in send_emails_generator(
+    provider="graph",
+    target_email_addresses=["user1@example.com", "user2@example.com"],
+    subject="System update",
+    body="Hello from MIT-utils",
+    delay_seconds=0.2,
+):
+    if result["status"] == "success":
+        print("sent", result["payload"]["to"])
+    else:
+        print("failed", result["payload"]["to"], result["error"])
+```
+
+Use `provider="gmail"` to send the same payload through Gmail.
+
+Each yielded result has this shape:
+
+```python
+{
+    "status": "success",  # or "error"
+    "payload": {
+        "provider": "gmail",
+        "to": "user@example.com",
+        "subject": "System update",
+        "body": "Hello from MIT-utils",
+    },
+    "response": {},       # only on success; Graph returns None
+    "error": "...",       # only on error
+}
+```
+
+The generator is done when the `async for` loop finishes. Use that moment to
+mark the parent job as complete in your application.
+
+### Backend Job Consumer
+
+Keep queue, database, and job-state logic in the consuming backend. The utility
+only sends one message at a time and yields a result for each recipient.
+
+```python
+from typing import List
+
+from mit_utils.email import send_emails_generator
 
 
-@app.post("/api/subscribe")
-async def subscribe(email: str, name: str, list_id: str):
-    try:
-        dimail.subscribe(list_id, email=email, name=name)
-        return {"ok": True, "message": f"Subscribed {email}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def process_email_job(
+    *,
+    job_id: str,
+    recipients: List[str],
+    subject: str,
+    body: str,
+    provider: str,
+) -> None:
+    async for result in send_emails_generator(
+        provider=provider,
+        target_email_addresses=recipients,
+        subject=subject,
+        body=body,
+    ):
+        if result["status"] == "success":
+            await record_email_success(job_id=job_id, result=result)
+        else:
+            await record_email_failure(job_id=job_id, result=result)
 
-
-@app.post("/api/send-email")
-async def send_email(to: str, subject: str, body: str):
-    try:
-        graph.send_email(
-            sender_email="noreply@example.com",
-            to_recipients=[to],
-            subject=subject,
-            body=body,
-            body_content_type="HTML",
-        )
-        return {"ok": True, "message": f"Email sent to {to}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    await mark_email_job_done(job_id)
 ```
 
 ---
@@ -305,18 +461,24 @@ async def send_email(to: str, subject: str, body: str):
 
 | Method                              | Description                                    |
 |-------------------------------------|------------------------------------------------|
+| `request(endpoint, data, ...)`      | Send a raw Dimail request with this client     |
 | `subscribe(list_id, email, ...)`    | Subscribe an email to a list                   |
 | `unsubscribe(list_id, email)`       | Unsubscribe an email from a list               |
-| `update_subscriber(list_id, ...)`   | Update subscriber details                      |
-| `list_subscribers_csv(list_id)`     | Get subscribers via CSV export                 |
-| `create_newsletter(list_id, ...)`   | Create a newsletter                            |
-| `send_newsletter(list_id, start)`   | Send a newsletter                              |
-| `list_newsletters(list_id)`         | List newsletters for a list                    |
+| `list_subscribers(list_id)`         | Get subscribers via CSV export                 |
+| `create_newsletter(subject, html_message, ...)` | Create a newsletter                |
+| `update_newsletter(newsletter_id, ...)` | Update a newsletter                         |
+| `send_newsletter(newsletter_id, start=0)` | Queue a newsletter send                    |
+| `list_newsletters()`                | List newsletters                               |
 | `create_list(name)`                 | Create a new mailing list                      |
 | `list_lists()`                      | List all mailing lists                         |
+| `remove_list(list_id)`              | Remove a mailing list                          |
 | `create_campaign(name)`             | Create a new campaign                          |
-| `add_lists_to_campaign(...)`        | Link lists to a campaign                       |
-| `send_campaign(campaign_id)`        | Send a campaign                                |
+| `remove_campaign(campaign_id)`      | Remove a campaign                              |
+| `update_campaign_lists(...)`        | Replace lists attached to a campaign           |
+| `attach_campaign_to_newsletter(...)` | Attach a campaign to a newsletter             |
+| `send_email(to, subject, html_message, ...)` | Queue a transactional email           |
+| `check_email_status(send_id)`       | Check a queued transactional email             |
+| `get_statistics(newsletter_id, ...)` | Get newsletter statistics                     |
 | `create_login_token(rkey)`          | Generate a login token                         |
 
 ### GraphEmailClient
@@ -325,10 +487,24 @@ async def send_email(to: str, subject: str, body: str):
 |-------------------------------------|------------------------------------------------|
 | `send_email(sender_email, ...)`     | Send an email via Graph                        |
 
+### GmailEmailClient
+
+| Method                              | Description                                    |
+|-------------------------------------|------------------------------------------------|
+| `send_email(to_email, subject, body)` | Send a plain text email via Gmail API        |
+
+### Bulk Email
+
+| Function                            | Description                                    |
+|-------------------------------------|------------------------------------------------|
+| `send_emails_generator(...)`        | Send one subject/body to many recipients, offload provider calls, and yield per-recipient results |
+
 ### Standalone Functions
 
 | Function                            | Description                                    |
 |-------------------------------------|------------------------------------------------|
 | `get_access_token()`                | Acquire and cache a Graph access token         |
 | `send_graph_email(...)`             | Send a single email with an existing token     |
+| `send_gmail_email(...)`             | Send a single email via Gmail API              |
+| `list_dimail_subscribers_csv(...)`  | Get Dimail subscribers through CSV export      |
 | `request_dimail(endpoint, ...)`     | Send a raw Dimail API request                  |

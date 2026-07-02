@@ -17,6 +17,7 @@ A utility bundle for Python development, providing ready-to-use modules for **au
   - [Role & Permission Checks](#role--permission-checks)
   - [Dimail Email Integration](#dimail-email-integration)
   - [Microsoft Graph Email Integration](#microsoft-graph-email-integration)
+  - [Gmail API Email Integration](#gmail-api-email-integration)
 - [Project Structure](#project-structure)
 - [License](#license)
 
@@ -33,7 +34,7 @@ pip install "mit_utils[auth,email] @ git+https://github.com/Majszlinger/MIT-util
 # Install only authentication utilities (Auth0 + JWT)
 pip install "mit_utils[auth] @ git+https://github.com/Majszlinger/MIT-utils.git"
 
-# Install only email utilities (Dimail + Microsoft Graph)
+# Install only email utilities (Dimail + Microsoft Graph + Gmail API)
 pip install "mit_utils[email] @ git+https://github.com/Majszlinger/MIT-utils.git"
 
 # Install core package with no extras
@@ -45,7 +46,10 @@ pip install "mit_utils @ git+https://github.com/Majszlinger/MIT-utils.git"
 | Extra    | Installs                                      | Provides                              |
 |----------|-----------------------------------------------|---------------------------------------|
 | `auth`   | `pyjwt`, `fastapi`, `cryptography`            | Auth0 & JWT authentication helpers    |
-| `email`  | `httpx`, `msal`                               | Dimail & Microsoft Graph email clients|
+| `email`  | `httpx`, `msal`, Google API client libraries  | Dimail, Graph, and Gmail email clients|
+
+Note: `Auth0_Auth` imports `requests`; install it in the consuming app if it
+is not already available there.
 
 ---
 
@@ -57,7 +61,7 @@ The `mit_utils.authentication` module provides two authentication strategies:
 
 | Class            | File                      | Purpose                                                    |
 |------------------|---------------------------|------------------------------------------------------------|
-| `Auth0_Auth`     | `auth0_auth.py`           | Full Auth0 integration — token verification, M2M tokens, Management API, permission/role checks |
+| `Auth0_Auth`     | `auth0_auth.py`           | Full Auth0 integration: token verification, M2M tokens, Management API, permission/role checks |
 | `JWT_Auth`       | `jwt_auth.py`             | Generic JWT token generation and validation with support for HS* and RS* algorithms |
 
 **Key features of `Auth0_Auth`:**
@@ -75,19 +79,23 @@ The `mit_utils.authentication` module provides two authentication strategies:
 
 ### Email (`email`)
 
-The `mit_utils.email` module provides two email providers:
+The `mit_utils.email` module provides three email providers:
 
 | Class / Function      | File      | Purpose                                                    |
 |-----------------------|-----------|------------------------------------------------------------|
-| `DimailClient`        | `dimail.py` | Full Dimail/ninjaMail API client — subscribe, unsubscribe, manage lists, newsletters, campaigns |
-| `GraphEmailClient`    | `graph.py`  | Microsoft Graph email client — send emails via Graph API with token caching |
+| `DimailClient`        | `dimail.py` | Full Dimail/ninjaMail API client: one-off sends, subscribers, lists, newsletters, campaigns |
+| `GraphEmailClient`    | `graph.py`  | Microsoft Graph email client: send emails via Graph API with token caching |
 | `send_graph_email`    | `graph.py`  | Simple function to send a single email through Graph       |
 | `get_access_token`    | `graph.py`  | Acquire and cache Microsoft Graph access tokens via MSAL   |
+| `GmailEmailClient`    | `gmail.py`  | Gmail API email client using service account delegation    |
+| `send_gmail_email`    | `gmail.py`  | Simple function to send a single email through Gmail API   |
+| `send_emails_generator` | `bulk.py` | Async generator for simple bulk Graph/Gmail sends          |
 
 **Key features of `DimailClient`:**
-- Subscriber management (subscribe, unsubscribe, update)
+- Transactional email queueing and status checks
+- Subscriber management (subscribe, unsubscribe, CSV export)
 - List and newsletter management
-- Campaign creation and sending
+- Campaign creation, list assignment, newsletter attachment, and removal
 - CSV subscriber export parsing
 - Raw API request helper for unsupported endpoints
 
@@ -96,6 +104,18 @@ The `mit_utils.email` module provides two email providers:
 - Support for To, CC, and BCC recipients
 - HTML and plain text body types
 - Configurable save-to-sent-items behavior
+
+**Key features of `GmailEmailClient`:**
+- Service account authentication with domain-wide delegation
+- Environment-based configuration for sender, delegated subject, credentials, and timeout
+- Plain text email sending with a string recipient, subject, and body
+
+**Key features of bulk email helpers:**
+- Sends Graph or Gmail messages one recipient at a time
+- Yields a success or error result for each attempt
+- Offloads synchronous provider sends so async backends do not block the event loop
+- Supports optional pacing with `delay_seconds` or `BULK_EMAIL_DELAY_SECONDS`
+- Keeps database/job tracking in the consuming application
 
 ---
 
@@ -129,6 +149,39 @@ send_graph_email(
     body="This is a test email.",
     body_content_type="HTML",
 )
+```
+
+### Send an email via Gmail API
+
+```python
+from mit_utils.email.gmail import send_gmail_email
+
+send_gmail_email(
+    to_email="user@example.com",
+    subject="Hello!",
+    body="This is a test email.",
+)
+```
+
+### Send bulk email with progress results
+
+```python
+from mit_utils.email import send_emails_generator
+
+async for result in send_emails_generator(
+    provider="graph",
+    target_email_addresses=["user1@example.com", "user2@example.com"],
+    subject="Hello!",
+    body="This is a bulk email.",
+    delay_seconds=0.2,
+):
+    print(result["status"], result["payload"]["to"])
+```
+
+You can also configure pacing globally:
+
+```bash
+BULK_EMAIL_DELAY_SECONDS=0.2
 ```
 
 ---
@@ -327,13 +380,24 @@ client.subscribe("newsletter-123", email="user@example.com", name="John Doe")
 client.unsubscribe("newsletter-123", email="user@example.com")
 
 # List subscribers (CSV export)
-subscribers = client.list_subscribers_csv("newsletter-123")
+subscribers = client.list_subscribers("list-123")
 
 # Create a newsletter
-client.create_newsletter("newsletter-123", subject="Hello", html_message="<h1>Hi!</h1>")
+newsletter = client.create_newsletter(
+    subject="Hello",
+    html_message="<h1>Hi!</h1>",
+)
 
 # Send a newsletter
-client.send_newsletter("newsletter-123", start=0)
+client.send_newsletter(newsletter_id="456", start=0)
+
+# Queue a one-off email and check its status
+send_payload = client.send_email(
+    to="user@example.com",
+    subject="Welcome",
+    html_message="<p>Hello</p>",
+)
+client.check_email_status(send_payload.get("id"))
 ```
 
 ### Microsoft Graph Email Integration
@@ -391,30 +455,71 @@ send_graph_email(
 
 ---
 
+### Gmail API Email Integration
+
+#### Environment Variables
+
+```bash
+GMAIL_SENDER_EMAIL=info@example.com
+GMAIL_DELEGATED_SUBJECT=info@example.com
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+# or, instead of GOOGLE_APPLICATION_CREDENTIALS:
+# GOOGLE_SERVICE_ACCOUNT_INFO={"type":"service_account",...}
+# GMAIL_TIMEOUT=10
+```
+
+The Google service account must have domain-wide delegation enabled and the
+Workspace Admin Console must authorize its numeric client ID for:
+
+```text
+https://www.googleapis.com/auth/gmail.send
+```
+
+#### Using GmailEmailClient
+
+```python
+from mit_utils.email import GmailEmailClient
+
+client = GmailEmailClient()
+client.send_email(
+    to_email="user@example.com",
+    subject="Welcome!",
+    body="Welcome aboard!",
+)
+```
+
+#### Simple Function Call
+
+```python
+from mit_utils.email.gmail import send_gmail_email
+
+send_gmail_email(
+    to_email="user@example.com",
+    subject="Hello from MIT-utils!",
+    body="This email was sent using mit_utils.",
+)
+```
+
+---
+
 ## Project Structure
 
 ```
 mit_utils/
-├── __init__.py
-├── authentication/
-│   ├── __init__.py
-│   ├── auth0_auth.py      # Auth0 OAuth2 + Management API
-│   ├── jwt_auth.py         # Generic JWT generation & validation
-│   └── auth_test.py        # Auth0 test utilities
-├── email/
-│   ├── __init__.py
-│   ├── dimail.py           # Dimail/ninjaMail API client
-│   └── graph.py            # Microsoft Graph email client
-└── aws/
-    └── __init__.py          # AWS utilities (placeholder)
-
-examples/
-└── fastapi_email/           # Reference FastAPI app with Dimail + Graph
-    ├── app/
-    │   ├── main.py          # Full FastAPI routes
-    │   └── settings.py      # Pydantic settings
-    ├── Dockerfile
-    └── requirements.txt
+|-- __init__.py
+|-- authentication/
+|   |-- __init__.py
+|   |-- auth0_auth.py      # Auth0 OAuth2 + Management API
+|   |-- jwt_auth.py         # Generic JWT generation and validation
+|   `-- auth_test.py        # Auth0 test utilities
+|-- email/
+|   |-- __init__.py
+|   |-- dimail.py           # Dimail/ninjaMail API client
+|   |-- graph.py            # Microsoft Graph email client
+|   |-- gmail.py            # Gmail API email client
+|   `-- bulk.py             # Bulk Graph/Gmail send generator
+`-- aws/
+    `-- __init__.py          # AWS utilities (placeholder)
 ```
 
 ---
