@@ -8,19 +8,21 @@ Authentication utilities for FastAPI applications, supporting **Auth0** and **ge
 pip install "mit_utils[auth] @ git+https://github.com/Majszlinger/MIT-utils.git"
 ```
 
-This installs `pyjwt`, `fastapi`, and `cryptography` as dependencies.
+This installs `pyjwt`, `fastapi`, and `cryptography` as dependencies. The
+Auth0 helper also imports `requests`; install it in the consuming app if it is
+not already available there.
 
 ## Quick Comparison
 
 | Feature                    | `Auth0_Auth`              | `JWT_Auth`                    |
 |----------------------------|---------------------------|-------------------------------|
-| Token verification         | ✅ JWKS-based             | ✅ Symmetric & asymmetric     |
-| Token generation           | ❌                        | ✅                            |
-| FastAPI dependencies       | ✅ Built-in factories     | ❌ (manual wiring)            |
-| Permission checks          | ✅ `has_permission`       | ❌                            |
-| M2M tokens                 | ✅ Cached                 | ❌                            |
-| Management API             | ✅ Full CRUD wrappers     | ❌                            |
-| User info endpoint         | ✅                        | ❌                            |
+| Token verification         | Yes, JWKS-based           | Yes, symmetric and asymmetric |
+| Token generation           | No                        | Yes                           |
+| FastAPI dependencies       | Yes, built-in factories   | No, manual wiring             |
+| Permission checks          | Yes, `has_permission`     | No                            |
+| M2M tokens                 | Yes, cached               | No                            |
+| Management API             | Yes, request wrappers     | No                            |
+| User info endpoint         | Yes                       | No                            |
 
 ---
 
@@ -33,8 +35,8 @@ Set these environment variables:
 ```bash
 AUTH0_DOMAIN=your-tenant.auth0.com
 AUTH0_AUDIENCE=https://your-api-identifier
-AUTH0_CLIENT_ID=your-m2m-client-id        # optional — for Management API access
-AUTH0_CLIENT_SECRET=your-m2m-client-secret # optional — for Management API access
+AUTH0_CLIENT_ID=your-m2m-client-id        # optional, for Management API access
+AUTH0_CLIENT_SECRET=your-m2m-client-secret # optional, for Management API access
 ```
 
 ### Basic Usage
