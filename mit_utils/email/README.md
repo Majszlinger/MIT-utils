@@ -225,6 +225,13 @@ client.send_email(
     subject="Update",
     body="Please see the attached report.",
     body_content_type="Text",
+    attachments=[
+        {
+            "filename": "report.txt",
+            "content": b"Report contents",
+            "content_type": "text/plain",
+        }
+    ],
     save_to_sent_items=True,
 )
 
@@ -288,7 +295,8 @@ except GraphAPIError as e:
 
 Send emails through Gmail API with a Google service account and Workspace
 domain-wide delegation. Gmail sending is intentionally simple: one recipient,
-a string subject, and a string plain-text body.
+a string subject, and a string text or HTML body. HTML sends are delivered as
+multipart alternative messages with a plain-text fallback.
 
 ### Configuration
 
@@ -316,7 +324,9 @@ from mit_utils.email.gmail import send_gmail_email
 send_gmail_email(
     to_email="user@example.com",
     subject="Welcome!",
-    body="Welcome aboard!",
+    body="<h1>Welcome aboard!</h1><p>Thanks for joining.</p>",
+    body_content_type="HTML",
+    text_body="Welcome aboard!\n\nThanks for joining.",
 )
 ```
 
@@ -331,13 +341,42 @@ client = GmailEmailClient()
 client.send_email(
     to_email="user@example.com",
     subject="Update",
-    body="Please see the attached report.",
+    body="<p>Please see the attached report.</p>",
+    body_content_type="HTML",
+    text_body="Please see the attached report.",
+    attachments=[
+        {
+            "filename": "report.txt",
+            "content": b"Report contents",
+            "content_type": "text/plain",
+        }
+    ],
 )
 ```
 
 You can pass `sender_email`, `service_account_file`,
 `service_account_info`, `delegated_subject`, or `timeout` directly when a test
-or integration should not read from environment variables.
+or integration should not read from environment variables. For HTML emails,
+pass `body_content_type="HTML"` and optionally `text_body`; when `text_body`
+is omitted, a simple fallback is generated from the HTML.
+
+### Attachments
+
+Graph, Gmail, and bulk sends accept regular file attachments as bytes:
+
+```python
+attachments = [
+    {
+        "filename": "report.pdf",
+        "content": report_bytes,
+        "content_type": "application/pdf",  # optional
+    }
+]
+```
+
+`filename` and bytes-like `content` are required. If `content_type` is omitted,
+MIT-utils infers it from the filename and falls back to
+`application/octet-stream`.
 
 ### Error Handling
 
@@ -387,10 +426,19 @@ BULK_EMAIL_DELAY_SECONDS=0.2
 from mit_utils.email import send_emails_generator
 
 async for result in send_emails_generator(
-    provider="graph",
+    provider="gmail",
     target_email_addresses=["user1@example.com", "user2@example.com"],
     subject="System update",
-    body="Hello from MIT-utils",
+    body="<h1>System update</h1><p>Hello from MIT-utils</p>",
+    body_content_type="HTML",
+    text_body="System update\n\nHello from MIT-utils",
+    attachments=[
+        {
+            "filename": "notice.txt",
+            "content": b"Shared attachment for every recipient.",
+            "content_type": "text/plain",
+        }
+    ],
     delay_seconds=0.2,
 ):
     if result["status"] == "success":
@@ -411,6 +459,8 @@ Each yielded result has this shape:
         "to": "user@example.com",
         "subject": "System update",
         "body": "Hello from MIT-utils",
+        "body_content_type": "Text",
+        "attachments": ["notice.txt"],
     },
     "response": {},       # only on success; Graph returns None
     "error": "...",       # only on error
@@ -485,19 +535,19 @@ async def process_email_job(
 
 | Method                              | Description                                    |
 |-------------------------------------|------------------------------------------------|
-| `send_email(sender_email, ...)`     | Send an email via Graph                        |
+| `send_email(sender_email, ...)`     | Send a text or HTML email with optional attachments via Graph |
 
 ### GmailEmailClient
 
 | Method                              | Description                                    |
 |-------------------------------------|------------------------------------------------|
-| `send_email(to_email, subject, body)` | Send a plain text email via Gmail API        |
+| `send_email(to_email, subject, body, ...)` | Send a text or HTML email with optional attachments via Gmail API |
 
 ### Bulk Email
 
 | Function                            | Description                                    |
 |-------------------------------------|------------------------------------------------|
-| `send_emails_generator(...)`        | Send one subject/body to many recipients, offload provider calls, and yield per-recipient results |
+| `send_emails_generator(...)`        | Send one text or HTML subject/body and optional attachments to many recipients, offload provider calls, and yield per-recipient results |
 
 ### Standalone Functions
 

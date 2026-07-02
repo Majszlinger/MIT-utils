@@ -103,17 +103,21 @@ The `mit_utils.email` module provides three email providers:
 - MSAL-based token acquisition with in-memory caching
 - Support for To, CC, and BCC recipients
 - HTML and plain text body types
+- Regular file attachments from bytes
 - Configurable save-to-sent-items behavior
 
 **Key features of `GmailEmailClient`:**
 - Service account authentication with domain-wide delegation
 - Environment-based configuration for sender, delegated subject, credentials, and timeout
-- Plain text email sending with a string recipient, subject, and body
+- Text and HTML email sending with optional plain-text fallback for HTML
+- Regular file attachments from bytes
 
 **Key features of bulk email helpers:**
 - Sends Graph or Gmail messages one recipient at a time
 - Yields a success or error result for each attempt
 - Offloads synchronous provider sends so async backends do not block the event loop
+- Supports Text and HTML body content types
+- Supports sending the same attachments to every recipient
 - Supports optional pacing with `delay_seconds` or `BULK_EMAIL_DELAY_SECONDS`
 - Keeps database/job tracking in the consuming application
 
@@ -159,7 +163,16 @@ from mit_utils.email.gmail import send_gmail_email
 send_gmail_email(
     to_email="user@example.com",
     subject="Hello!",
-    body="This is a test email.",
+    body="<h1>Hello!</h1><p>This is a test email.</p>",
+    body_content_type="HTML",
+    text_body="Hello!\n\nThis is a test email.",
+    attachments=[
+        {
+            "filename": "hello.txt",
+            "content": b"Hello from MIT-utils.",
+            "content_type": "text/plain",
+        }
+    ],
 )
 ```
 
@@ -169,10 +182,19 @@ send_gmail_email(
 from mit_utils.email import send_emails_generator
 
 async for result in send_emails_generator(
-    provider="graph",
+    provider="gmail",
     target_email_addresses=["user1@example.com", "user2@example.com"],
     subject="Hello!",
-    body="This is a bulk email.",
+    body="<h1>Hello!</h1><p>This is a bulk email.</p>",
+    body_content_type="HTML",
+    text_body="Hello!\n\nThis is a bulk email.",
+    attachments=[
+        {
+            "filename": "hello.txt",
+            "content": b"Hello from MIT-utils.",
+            "content_type": "text/plain",
+        }
+    ],
     delay_seconds=0.2,
 ):
     print(result["status"], result["payload"]["to"])
@@ -484,7 +506,16 @@ client = GmailEmailClient()
 client.send_email(
     to_email="user@example.com",
     subject="Welcome!",
-    body="Welcome aboard!",
+    body="<h1>Welcome aboard!</h1>",
+    body_content_type="HTML",
+    text_body="Welcome aboard!",
+    attachments=[
+        {
+            "filename": "welcome.txt",
+            "content": b"Welcome aboard!",
+            "content_type": "text/plain",
+        }
+    ],
 )
 ```
 
@@ -496,7 +527,9 @@ from mit_utils.email.gmail import send_gmail_email
 send_gmail_email(
     to_email="user@example.com",
     subject="Hello from MIT-utils!",
-    body="This email was sent using mit_utils.",
+    body="<p>This email was sent using <strong>mit_utils</strong>.</p>",
+    body_content_type="HTML",
+    text_body="This email was sent using mit_utils.",
 )
 ```
 

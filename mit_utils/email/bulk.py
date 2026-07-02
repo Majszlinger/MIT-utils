@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
-from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
+from typing import Any, AsyncGenerator, Dict, Iterable, List, Mapping, Optional
 
 
 DEFAULT_DELAY_SECONDS = 0.0
 ENV_DELAY_SECONDS = "BULK_EMAIL_DELAY_SECONDS"
+BODY_CONTENT_TYPES = {"Text", "HTML"}
 BulkEmailResult = Dict[str, Any]
 
 __all__ = [
@@ -42,6 +43,28 @@ def _normalize_target_email_addresses(target_email_addresses: Iterable[str]) -> 
     return emails
 
 
+def _validate_body_content_type(body_content_type: str) -> str:
+    if body_content_type not in BODY_CONTENT_TYPES:
+        raise ValueError("body_content_type must be 'Text' or 'HTML'.")
+    return body_content_type
+
+
+def _normalize_attachments(
+    attachments: Optional[Iterable[Mapping[str, Any]]],
+) -> List[Mapping[str, Any]]:
+    if attachments is None:
+        return []
+
+    normalized = list(attachments)
+    for attachment in normalized:
+        if not isinstance(attachment, Mapping):
+            raise ValueError("attachments must contain mapping objects.")
+        filename = attachment.get("filename")
+        if not isinstance(filename, str) or not filename:
+            raise ValueError("attachment filename is required.")
+    return normalized
+
+
 def _resolve_delay_seconds(delay_seconds: Optional[float]) -> float:
     if delay_seconds is None:
         raw_delay = os.getenv(ENV_DELAY_SECONDS)
@@ -63,13 +86,25 @@ def _resolve_delay_seconds(delay_seconds: Optional[float]) -> float:
     return resolved_delay
 
 
-def _payload(*, provider: str, to_email: str, subject: str, body: str) -> Dict[str, str]:
-    return {
+def _payload(
+    *,
+    provider: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    body_content_type: str,
+    attachment_filenames: List[str],
+) -> Dict[str, Any]:
+    payload = {
         "provider": provider,
         "to": to_email,
         "subject": subject,
         "body": body,
+        "body_content_type": body_content_type,
     }
+    if attachment_filenames:
+        payload["attachments"] = attachment_filenames
+    return payload
 
 
 def _send_email_sync(
@@ -80,6 +115,9 @@ def _send_email_sync(
     to_email: str,
     subject: str,
     body: str,
+    body_content_type: str,
+    text_body: Optional[str],
+    attachments: List[Mapping[str, Any]],
 ) -> Any:
     if provider == "graph":
         return client.send_email(
@@ -87,6 +125,8 @@ def _send_email_sync(
             to_recipients=to_email,
             subject=subject,
             body=body,
+            body_content_type=body_content_type,
+            attachments=attachments,
         )
 
     return client.send_email(
@@ -94,6 +134,9 @@ def _send_email_sync(
         to_email=to_email,
         subject=subject,
         body=body,
+        body_content_type=body_content_type,
+        text_body=text_body,
+        attachments=attachments,
     )
 
 
@@ -105,6 +148,9 @@ async def _send_email_in_executor(
     to_email: str,
     subject: str,
     body: str,
+    body_content_type: str,
+    text_body: Optional[str],
+    attachments: List[Mapping[str, Any]],
 ) -> Any:
     loop = asyncio.get_running_loop()
     send_call = functools.partial(
@@ -115,6 +161,9 @@ async def _send_email_in_executor(
         to_email=to_email,
         subject=subject,
         body=body,
+        body_content_type=body_content_type,
+        text_body=text_body,
+        attachments=attachments,
     )
     return await loop.run_in_executor(None, send_call)
 
@@ -125,12 +174,18 @@ async def send_emails_generator(
     subject: str,
     body: str,
     *,
+    body_content_type: str = "Text",
+    text_body: Optional[str] = None,
+    attachments: Optional[Iterable[Mapping[str, Any]]] = None,
     delay_seconds: Optional[float] = None,
 ) -> AsyncGenerator[BulkEmailResult, None]:
     """Send simple emails one by one and yield the result of each attempt."""
 
     normalized_provider = _normalize_provider(provider)
     emails = _normalize_target_email_addresses(target_email_addresses)
+    resolved_body_content_type = _validate_body_content_type(body_content_type)
+    normalized_attachments = _normalize_attachments(attachments)
+    attachment_filenames = [attachment["filename"] for attachment in normalized_attachments]
     resolved_delay_seconds = _resolve_delay_seconds(delay_seconds)
 
     if normalized_provider == "graph":
@@ -151,6 +206,8 @@ async def send_emails_generator(
             to_email=to_email,
             subject=subject,
             body=body,
+            body_content_type=resolved_body_content_type,
+            attachment_filenames=attachment_filenames,
         )
         try:
             response = await _send_email_in_executor(
@@ -160,6 +217,9 @@ async def send_emails_generator(
                 to_email=to_email,
                 subject=subject,
                 body=body,
+                body_content_type=resolved_body_content_type,
+                text_body=text_body,
+                attachments=normalized_attachments,
             )
             yield {
                 "status": "success",

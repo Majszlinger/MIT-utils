@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import mimetypes
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 from urllib.parse import quote
 
 
@@ -13,6 +15,7 @@ DEFAULT_TIMEOUT = 10
 ENV_TENANT_ID = "MS_GRAPH_TENANT_ID"
 ENV_CLIENT_ID = "MS_GRAPH_CLIENT_ID"
 ENV_CLIENT_SECRET = "MS_GRAPH_CLIENT_SECRET"
+DEFAULT_ATTACHMENT_CONTENT_TYPE = "application/octet-stream"
 
 Recipient = Union[str, Dict[str, Any]]
 
@@ -252,6 +255,7 @@ def _message_payload(
     body_content_type: str,
     cc_recipients: Optional[Union[Recipient, Iterable[Recipient]]] = None,
     bcc_recipients: Optional[Union[Recipient, Iterable[Recipient]]] = None,
+    attachments: Optional[Iterable[Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Build the ``message`` object for the Graph ``sendMail`` request.
 
@@ -263,6 +267,7 @@ def _message_payload(
             ``HTML``.
         cc_recipients: Optional CC recipient or recipients.
         bcc_recipients: Optional BCC recipient or recipients.
+        attachments: Optional file attachments.
 
     Returns:
         A dictionary matching Microsoft Graph's ``message`` payload shape.
@@ -278,8 +283,57 @@ def _message_payload(
         message["ccRecipients"] = _normalize_recipients(cc_recipients)
     if bcc_recipients:
         message["bccRecipients"] = _normalize_recipients(bcc_recipients)
+    graph_attachments = _graph_attachments(attachments)
+    if graph_attachments:
+        message["attachments"] = graph_attachments
 
     return message
+
+
+def _normalize_attachments(
+    attachments: Optional[Iterable[Mapping[str, Any]]],
+) -> List[Dict[str, Any]]:
+    if attachments is None:
+        return []
+
+    normalized = []
+    for attachment in attachments:
+        if not isinstance(attachment, Mapping):
+            raise ValueError("attachments must contain mapping objects.")
+
+        filename = attachment.get("filename")
+        if not isinstance(filename, str) or not filename:
+            raise ValueError("attachment filename is required.")
+
+        content = attachment.get("content")
+        if not isinstance(content, (bytes, bytearray, memoryview)):
+            raise ValueError("attachment content must be bytes-like.")
+        content_bytes = bytes(content)
+
+        content_type = attachment.get("content_type") or mimetypes.guess_type(filename)[0]
+        if not isinstance(content_type, str) or not content_type:
+            content_type = DEFAULT_ATTACHMENT_CONTENT_TYPE
+
+        normalized.append(
+            {
+                "filename": filename,
+                "content": content_bytes,
+                "content_type": content_type,
+            }
+        )
+    return normalized
+
+
+def _graph_attachments(attachments: Optional[Iterable[Mapping[str, Any]]]) -> List[Dict[str, str]]:
+    return [
+        {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": attachment["filename"],
+            "contentType": attachment["content_type"],
+            "contentBytes": base64.b64encode(attachment["content"]).decode("ascii"),
+        }
+        for attachment in _normalize_attachments(attachments)
+    ]
 
 
 def send_graph_email(
@@ -290,6 +344,7 @@ def send_graph_email(
     body: str,
     *,
     body_content_type: str = "Text",
+    attachments: Optional[Iterable[Mapping[str, Any]]] = None,
     save_to_sent_items: bool = True,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> None:
@@ -306,6 +361,7 @@ def send_graph_email(
         subject: Email subject line.
         body: Email body content.
         body_content_type: ``Text`` or ``HTML``.
+        attachments: Optional file attachments.
         save_to_sent_items: Whether Graph should save the email in Sent Items.
         timeout: HTTP timeout in seconds.
 
@@ -320,6 +376,7 @@ def send_graph_email(
         subject=subject,
         body=body,
         body_content_type=body_content_type,
+        attachments=attachments,
         save_to_sent_items=save_to_sent_items,
     )
 
@@ -403,6 +460,7 @@ class GraphEmailClient:
         save_to_sent_items: bool = True,
         cc_recipients: Optional[Union[Recipient, Iterable[Recipient]]] = None,
         bcc_recipients: Optional[Union[Recipient, Iterable[Recipient]]] = None,
+        attachments: Optional[Iterable[Mapping[str, Any]]] = None,
     ) -> None:
         """Send an email through Microsoft Graph.
 
@@ -417,6 +475,7 @@ class GraphEmailClient:
                 Items.
             cc_recipients: Optional CC recipient or recipients.
             bcc_recipients: Optional BCC recipient or recipients.
+            attachments: Optional file attachments.
 
         Raises:
             ValueError: If ``body_content_type`` is not ``Text`` or ``HTML``.
@@ -448,6 +507,7 @@ class GraphEmailClient:
                 body_content_type=body_content_type,
                 cc_recipients=cc_recipients,
                 bcc_recipients=bcc_recipients,
+                attachments=attachments,
             ),
             "saveToSentItems": save_to_sent_items,
         }

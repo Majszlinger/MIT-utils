@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
+import mimetypes
 import os
+import re
 from email.message import EmailMessage
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 
 GMAIL_API_SERVICE_NAME = "gmail"
@@ -18,6 +21,8 @@ ENV_SERVICE_ACCOUNT_INFO = "GOOGLE_SERVICE_ACCOUNT_INFO"
 ENV_SENDER_EMAIL = "GMAIL_SENDER_EMAIL"
 ENV_DELEGATED_SUBJECT = "GMAIL_DELEGATED_SUBJECT"
 ENV_TIMEOUT = "GMAIL_TIMEOUT"
+BODY_CONTENT_TYPES = {"Text", "HTML"}
+DEFAULT_ATTACHMENT_CONTENT_TYPE = "application/octet-stream"
 
 __all__ = [
     "DEFAULT_TIMEOUT",
@@ -119,6 +124,66 @@ def _load_service_account_info(service_account_info: Union[str, Dict[str, Any]])
     return parsed
 
 
+def _validate_body_content_type(body_content_type: str) -> str:
+    if body_content_type not in BODY_CONTENT_TYPES:
+        raise ValueError("body_content_type must be 'Text' or 'HTML'.")
+    return body_content_type
+
+
+def _html_to_text(html_body: str) -> str:
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", html_body)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(div|h[1-6]|li|p|tr)\s*>", "\n\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text)
+    lines = []
+    for raw_line in text.splitlines():
+        line = " ".join(raw_line.split())
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def _normalize_attachments(
+    attachments: Optional[Iterable[Mapping[str, Any]]],
+) -> List[Dict[str, Any]]:
+    if attachments is None:
+        return []
+
+    normalized = []
+    for attachment in attachments:
+        if not isinstance(attachment, Mapping):
+            raise ValueError("attachments must contain mapping objects.")
+
+        filename = attachment.get("filename")
+        if not isinstance(filename, str) or not filename:
+            raise ValueError("attachment filename is required.")
+
+        content = attachment.get("content")
+        if not isinstance(content, (bytes, bytearray, memoryview)):
+            raise ValueError("attachment content must be bytes-like.")
+        content_bytes = bytes(content)
+
+        content_type = attachment.get("content_type") or mimetypes.guess_type(filename)[0]
+        if not isinstance(content_type, str) or not content_type:
+            content_type = DEFAULT_ATTACHMENT_CONTENT_TYPE
+        maintype, _, subtype = content_type.partition("/")
+        if not maintype or not subtype:
+            content_type = DEFAULT_ATTACHMENT_CONTENT_TYPE
+            maintype, subtype = "application", "octet-stream"
+
+        normalized.append(
+            {
+                "filename": filename,
+                "content": content_bytes,
+                "content_type": content_type,
+                "maintype": maintype,
+                "subtype": subtype,
+            }
+        )
+    return normalized
+
+
 def _create_credentials(
     *,
     service_account_file: Optional[str] = None,
@@ -156,7 +221,16 @@ def _create_credentials(
         raise GmailConfigError("Could not create Gmail service account credentials: %s" % error) from error
 
 
-def _build_email_message(*, sender_email: str, to_email: str, subject: str, body: str) -> EmailMessage:
+def _build_email_message(
+    *,
+    sender_email: str,
+    to_email: str,
+    subject: str,
+    body: str,
+    body_content_type: str = "Text",
+    text_body: Optional[str] = None,
+    attachments: Optional[Iterable[Mapping[str, Any]]] = None,
+) -> EmailMessage:
     if not sender_email:
         raise ValueError("sender_email is required.")
     if not to_email:
@@ -165,12 +239,27 @@ def _build_email_message(*, sender_email: str, to_email: str, subject: str, body
         raise ValueError("subject must be a string.")
     if not isinstance(body, str):
         raise ValueError("body must be a string.")
+    if text_body is not None and not isinstance(text_body, str):
+        raise ValueError("text_body must be a string.")
 
+    resolved_body_content_type = _validate_body_content_type(body_content_type)
     message = EmailMessage()
     message["From"] = sender_email
     message["To"] = to_email
     message["Subject"] = subject
-    message.set_content(body)
+    if resolved_body_content_type == "HTML":
+        message.set_content(text_body if text_body is not None else _html_to_text(body))
+        message.add_alternative(body, subtype="html")
+    else:
+        message.set_content(body)
+
+    for attachment in _normalize_attachments(attachments):
+        message.add_attachment(
+            attachment["content"],
+            maintype=attachment["maintype"],
+            subtype=attachment["subtype"],
+            filename=attachment["filename"],
+        )
     return message
 
 
@@ -200,13 +289,16 @@ def send_gmail_email(
     to_email: str,
     subject: str,
     body: str,
+    body_content_type: str = "Text",
+    text_body: Optional[str] = None,
+    attachments: Optional[Iterable[Mapping[str, Any]]] = None,
     sender_email: Optional[str] = None,
     service_account_file: Optional[str] = None,
     service_account_info: Optional[Union[str, Dict[str, Any]]] = None,
     delegated_subject: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Send a simple plain text email through Gmail API."""
+    """Send a simple text or HTML email through Gmail API."""
 
     client = GmailEmailClient(
         service_account_file=service_account_file,
@@ -219,6 +311,9 @@ def send_gmail_email(
         to_email=to_email,
         subject=subject,
         body=body,
+        body_content_type=body_content_type,
+        text_body=text_body,
+        attachments=attachments,
     )
 
 
@@ -273,9 +368,12 @@ class GmailEmailClient:
         to_email: str,
         subject: str,
         body: str,
+        body_content_type: str = "Text",
+        text_body: Optional[str] = None,
+        attachments: Optional[Iterable[Mapping[str, Any]]] = None,
         sender_email: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Send a simple plain text email through Gmail API."""
+        """Send a simple text or HTML email through Gmail API."""
 
         resolved_sender = _resolve_setting(sender_email, ENV_SENDER_EMAIL, "sender email")
         if not self._delegated_subject_configured and not os.getenv(ENV_DELEGATED_SUBJECT):
@@ -289,6 +387,9 @@ class GmailEmailClient:
             to_email=to_email,
             subject=subject,
             body=body,
+            body_content_type=body_content_type,
+            text_body=text_body,
+            attachments=attachments,
         )
 
         _google_auth_httplib2, _httplib2, _GoogleAuthError, _service_account, _build, HttpError = (
