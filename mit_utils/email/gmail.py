@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import html
 import json
 import mimetypes
 import os
 import re
 from email.message import EmailMessage
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 
 GMAIL_API_SERVICE_NAME = "gmail"
@@ -17,7 +18,7 @@ GMAIL_API_VERSION = "v1"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 DEFAULT_TIMEOUT = 10
 ENV_SERVICE_ACCOUNT_FILE = "GOOGLE_APPLICATION_CREDENTIALS"
-ENV_SERVICE_ACCOUNT_INFO = "GOOGLE_SERVICE_ACCOUNT_INFO"
+ENV_SERVICE_ACCOUNT_INFO_BASE64 = "GOOGLE_SERVICE_ACCOUNT_INFO_BASE64"
 ENV_SENDER_EMAIL = "GMAIL_SENDER_EMAIL"
 ENV_DELEGATED_SUBJECT = "GMAIL_DELEGATED_SUBJECT"
 ENV_TIMEOUT = "GMAIL_TIMEOUT"
@@ -29,7 +30,7 @@ __all__ = [
     "ENV_DELEGATED_SUBJECT",
     "ENV_SENDER_EMAIL",
     "ENV_SERVICE_ACCOUNT_FILE",
-    "ENV_SERVICE_ACCOUNT_INFO",
+    "ENV_SERVICE_ACCOUNT_INFO_BASE64",
     "ENV_TIMEOUT",
     "GMAIL_API_SERVICE_NAME",
     "GMAIL_API_VERSION",
@@ -110,10 +111,7 @@ def _resolve_timeout(timeout: Optional[int]) -> int:
     return timeout
 
 
-def _load_service_account_info(service_account_info: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
-    if isinstance(service_account_info, dict):
-        return service_account_info
-
+def _load_service_account_info(service_account_info: str) -> Dict[str, Any]:
     try:
         parsed = json.loads(service_account_info)
     except ValueError as error:
@@ -122,6 +120,18 @@ def _load_service_account_info(service_account_info: Union[str, Dict[str, Any]])
     if not isinstance(parsed, dict):
         raise GmailConfigError("Gmail service account info must decode to a JSON object.")
     return parsed
+
+
+def _load_service_account_info_base64(service_account_info_base64: str) -> Dict[str, Any]:
+    normalized = "".join(service_account_info_base64.split())
+    try:
+        decoded = base64.b64decode(normalized, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as error:
+        raise GmailConfigError(
+            "Gmail base64 service account info must be valid base64-encoded UTF-8 JSON."
+        ) from error
+
+    return _load_service_account_info(decoded)
 
 
 def _validate_body_content_type(body_content_type: str) -> str:
@@ -187,7 +197,7 @@ def _normalize_attachments(
 def _create_credentials(
     *,
     service_account_file: Optional[str] = None,
-    service_account_info: Optional[Union[str, Dict[str, Any]]] = None,
+    service_account_info_base64: Optional[str] = None,
     delegated_subject: Optional[str] = None,
 ) -> Any:
     (
@@ -200,12 +210,12 @@ def _create_credentials(
     ) = _load_google_modules()
 
     subject = delegated_subject or os.getenv(ENV_DELEGATED_SUBJECT)
-    raw_info = service_account_info or os.getenv(ENV_SERVICE_ACCOUNT_INFO)
+    raw_info_base64 = service_account_info_base64 or os.getenv(ENV_SERVICE_ACCOUNT_INFO_BASE64)
 
     try:
-        if raw_info:
+        if raw_info_base64:
             credentials = service_account.Credentials.from_service_account_info(
-                _load_service_account_info(raw_info),
+                _load_service_account_info_base64(raw_info_base64),
                 scopes=[GMAIL_SEND_SCOPE],
             )
         else:
@@ -294,7 +304,7 @@ def send_gmail_email(
     attachments: Optional[Iterable[Mapping[str, Any]]] = None,
     sender_email: Optional[str] = None,
     service_account_file: Optional[str] = None,
-    service_account_info: Optional[Union[str, Dict[str, Any]]] = None,
+    service_account_info_base64: Optional[str] = None,
     delegated_subject: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -302,7 +312,7 @@ def send_gmail_email(
 
     client = GmailEmailClient(
         service_account_file=service_account_file,
-        service_account_info=service_account_info,
+        service_account_info_base64=service_account_info_base64,
         delegated_subject=delegated_subject,
         timeout=timeout,
     )
@@ -324,12 +334,12 @@ class GmailEmailClient:
         self,
         *,
         service_account_file: Optional[str] = None,
-        service_account_info: Optional[Union[str, Dict[str, Any]]] = None,
+        service_account_info_base64: Optional[str] = None,
         delegated_subject: Optional[str] = None,
         timeout: Optional[int] = None,
     ) -> None:
         self.service_account_file = service_account_file
-        self.service_account_info = service_account_info
+        self.service_account_info_base64 = service_account_info_base64
         self.delegated_subject = delegated_subject
         self._delegated_subject_configured = delegated_subject is not None
         self.timeout = _resolve_timeout(timeout)
@@ -340,7 +350,7 @@ class GmailEmailClient:
         if self._credentials is None:
             self._credentials = _create_credentials(
                 service_account_file=self.service_account_file,
-                service_account_info=self.service_account_info,
+                service_account_info_base64=self.service_account_info_base64,
                 delegated_subject=self.delegated_subject,
             )
         return self._credentials

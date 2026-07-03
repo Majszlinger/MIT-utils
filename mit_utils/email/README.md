@@ -303,10 +303,22 @@ multipart alternative messages with a plain-text fallback.
 ```bash
 GMAIL_SENDER_EMAIL=info@example.com
 GMAIL_DELEGATED_SUBJECT=info@example.com
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-# or, instead of GOOGLE_APPLICATION_CREDENTIALS:
-# GOOGLE_SERVICE_ACCOUNT_INFO={"type":"service_account",...}
+GOOGLE_SERVICE_ACCOUNT_INFO_BASE64=base64-encoded-service-account-json
+# or use a credentials file:
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 # GMAIL_TIMEOUT=10
+```
+
+Base64-encoding the JSON avoids shell, `.env`, Windows/Linux newline, and
+escape-sequence issues around the service account `private_key`. It is still a
+secret, not encryption. For example:
+
+```bash
+# Linux/macOS
+base64 < service-account.json | tr -d '\n'
+
+# PowerShell
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw service-account.json)))
 ```
 
 The service account must have domain-wide delegation enabled, and Google
@@ -355,10 +367,10 @@ client.send_email(
 ```
 
 You can pass `sender_email`, `service_account_file`,
-`service_account_info`, `delegated_subject`, or `timeout` directly when a test
-or integration should not read from environment variables. For HTML emails,
-pass `body_content_type="HTML"` and optionally `text_body`; when `text_body`
-is omitted, a simple fallback is generated from the HTML.
+`service_account_info_base64`, `delegated_subject`, or `timeout` directly when
+a test or integration should not read from environment variables. For HTML
+emails, pass `body_content_type="HTML"` and optionally `text_body`; when
+`text_body` is omitted, a simple fallback is generated from the HTML.
 
 ### Attachments
 

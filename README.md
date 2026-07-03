@@ -484,10 +484,22 @@ send_graph_email(
 ```bash
 GMAIL_SENDER_EMAIL=info@example.com
 GMAIL_DELEGATED_SUBJECT=info@example.com
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-# or, instead of GOOGLE_APPLICATION_CREDENTIALS:
-# GOOGLE_SERVICE_ACCOUNT_INFO={"type":"service_account",...}
+GOOGLE_SERVICE_ACCOUNT_INFO_BASE64=base64-encoded-service-account-json
+# or use a credentials file:
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
 # GMAIL_TIMEOUT=10
+```
+
+Base64-encoding the JSON avoids shell, `.env`, Windows/Linux newline, and
+escape-sequence issues around the service account `private_key`. It is still a
+secret, not encryption. For example:
+
+```bash
+# Linux/macOS
+base64 < service-account.json | tr -d '\n'
+
+# PowerShell
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content -Raw service-account.json)))
 ```
 
 The Google service account must have domain-wide delegation enabled and the
